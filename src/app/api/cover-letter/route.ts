@@ -160,7 +160,10 @@ function cleanModelOutput(text: string): string {
         .replace(/^[\s]*[-*•]\s+/gm, '')
         // Strip bare URLs from web research — long unbreakable strings overflow the page margin
         .replace(/https?:\/\/\S+/g, '')
-        // Collapse any double-spaces left behind by URL removal
+        // Strip source attribution phrases that leak from search grounding
+        // e.g. "According to LinkedIn, ..." / "As reported by TechCrunch, " / "per their website"
+        .replace(/\b(according to|as reported by|as per|based on information from|sourced from|per|as stated (on|by)|as (noted|mentioned) (on|by|in))\s+[^,.\n]{1,60}[,.\s]/gi, '')
+        // Collapse any double-spaces left behind by removals
         .replace(/  +/g, ' ')
         .trim();
 }
@@ -194,7 +197,7 @@ export async function POST(req: NextRequest) {
                 1. Carefully read the job description and mirror its tone, vocabulary, and level of formality throughout the letter.
                 2. The letter must flow immaculately — use smooth, purposeful transitions so each paragraph leads naturally into the next.
                 3. Emphasise throughout how the candidate will contribute to the team and organisation — not generic claims, but concrete ways their skills and experience directly address the company's stated needs.
-                4. Use Google Search to find recent news, product launches, initiatives, or strategic developments at ${companyName || 'the company'} (within the last 12 months). Weave 1-2 specific, accurate findings naturally into the letter to show genuine awareness.
+                4. Use Google Search to find recent news, product launches, initiatives, or strategic developments at ${companyName || 'the company'} (within the last 12 months). Weave 1-2 specific, accurate findings naturally into the letter as plain stated facts — write them as things you already know, not as things you researched. NEVER cite the source. NEVER write phrases like "According to", "As reported by", "Based on", "I saw on", "LinkedIn shows", "their website states", "per [source]", or any attribution to a platform, website, or publication. The reader must not be able to tell where the information came from.
                 5. Lead with a strong opening that immediately connects the candidate's background to the role and company.
                 6. Draw on measurable achievements and business impact from the resume.
                 7. Bold important words and phrases using \\textbf{...} — prioritise: (a) key skills and requirements from the job description, and (b) high-impact phrases that would immediately catch a hiring manager's eye (e.g. strong results, unique value propositions, standout achievements). Aim for 6-10 bolded instances spread naturally across the letter.
