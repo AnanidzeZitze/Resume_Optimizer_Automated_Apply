@@ -40,3 +40,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Runtime artifacts
+*.log
+resume_optimizer_*.log
+.baseline_*.json
+baseline.json
+.env.local
+
+# Logs directory
+logs/
+.logs/
+
+# Personal data — keep local only
+public/linkedin.pdf

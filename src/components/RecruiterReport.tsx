@@ -37,7 +37,7 @@ export function RecruiterReport({ overview, onClose }: RecruiterReportProps) {
                             <BarChart3 className="w-6 h-6 text-red-600" />
                         </div>
                         <div>
-                            <h2 className="text-xl font-bold text-white">Recruiter's Report</h2>
+                            <h2 className="text-xl font-bold text-white">Recruiter&apos;s Report</h2>
                             <p className="text-zinc-400 text-sm">Critical Analysis & Fit Check</p>
                         </div>
                     </div>
@@ -57,7 +57,7 @@ export function RecruiterReport({ overview, onClose }: RecruiterReportProps) {
                             <span className="text-xs uppercase font-bold opacity-80">/ 10</span>
                         </div>
                         <p className="mt-4 text-center text-zinc-300 italic max-w-md">
-                            "{overview.verdict}"
+                            &ldquo;{overview.verdict}&rdquo;
                         </p>
                     </div>
 
@@ -96,9 +96,9 @@ export function RecruiterReport({ overview, onClose }: RecruiterReportProps) {
                             <TrendingUp className="w-5 h-5" />
                         </div>
                         <div>
-                            <h4 className="text-white font-bold text-sm mb-1">What's Next?</h4>
+                            <h4 className="text-white font-bold text-sm mb-1">What&apos;s Next?</h4>
                             <p className="text-zinc-400 text-sm">
-                                We've generated tailored rewrites to address these weaknesses.
+                                We&apos;ve generated tailored rewrites to address these weaknesses.
                                 Use the workspace to review and apply the optimized content.
                             </p>
                         </div>

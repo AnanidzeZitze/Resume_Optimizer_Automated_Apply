@@ -1,0 +1,173 @@
+\documentclass[10pt]{extarticle}
+
+% ---------- BASIC PACKAGES ----------
+\usepackage[margin=0.2in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+\usepackage{ragged2e}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    urlcolor=black,
+    linkcolor=black,
+    citecolor=black,
+    filecolor=black
+}
+\usepackage{enumitem}
+
+% No paragraph indent, no automatic vertical gap between paragraphs
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+
+% Compact bullet lists
+\setlist[itemize]{%
+  noitemsep,
+  topsep=2pt,
+  leftmargin=*,
+  itemindent=0pt,
+  labelsep=4pt
+}
+
+% Ragged-right inside all itemize environments
+\AtBeginEnvironment{itemize}{\RaggedRight}
+
+% ---------- SECTION TITLE (TIGHT SPACING) ----------
+\newcommand{\sectiontitle}[1]{%
+  \vspace{-4pt}
+  \rule{\linewidth}{1.4pt}\\[-18pt]
+  \begin{center}
+    {\large \textbf{#1}}\\[-6pt]
+  \end{center}
+  \vspace{-5pt}
+}
+
+% ---------- SKILLS LINE BREAK ----------
+\newcommand{\skillbreak}{\\}
+
+% ---------- JOB TITLE FORMAT ----------
+\newcommand{\job}[4]{%
+  \textbf{#1} \hfill \textbf{#3}\\%
+  \textit{#2} \hfill \textit{#4}\par%
+  \vspace{-3pt}%
+}
+
+\begin{document}
+
+% =========================
+%         HEADER
+% =========================
+\begin{center}
+{\Large \textbf{YOUR NAME}}\\[-1pt]
+City, State \;|\;
+000-000-0000 \;|\;
+\href{mailto:your.email@example.com}{your.email@example.com} \;|\;
+\href{https://www.linkedin.com/in/yourprofile/}{LinkedIn} \;|\;
+\href{https://yourwebsite.com}{Website}
+\end{center}
+\vspace{-9pt}
+
+% =========================
+%  PROFESSIONAL SUMMARY
+% =========================
+\sectiontitle{Professional Summary}
+% SLOT: Professional Summary
+\textbf{Growth-focused Marketing Strategist} with 2+ years of driving measurable performance across oil \& gas, retail, and nonprofit sectors.
+Expert in scaling \textbf{digital acquisition, optimizing SEO/SEM funnels, and turning analytics into revenue outcomes}. Led campaigns that delivered \textbf{+30\% B2B lead growth, 230\% engagement lift, and supported \$10M+ in high-value bids}.
+% END_SLOT
+
+% =========================
+%        SKILLS
+% =========================
+\sectiontitle{Skills \& Certifications}
+% SLOT: Skills
+\textbf{Marketing \& Digital Skills:} Salesforce, HubSpot, SEO/SEM, Google Analytics \& Tag Manager, Content Management Systems (CMS), A/B Testing, CapCut, Performance Marketing, Email Marketing, Paid Media Marketing, Social Media Marketing, Meta Ads, Google Ads, E-commerce (Amazon \& Shopify), Content Strategy, Microsoft Office, Adobe Suite, WordPress \& Wix, Canva\skillbreak
+\textbf{Analytical Skills \& Tools:} Google Analytics, Advanced Excel, Data Analysis \& Visualization, SQL, R Program, Python, Tableau/Power BI, Trello, Jira, Slack, Content Scheduling Tools, Business \& Project Management
+% END_SLOT
+
+% =========================
+%        EXPERIENCE
+% =========================
+\sectiontitle{Experience}
+
+\job{Marketing Operations Consultant}
+{Grimes King Foundation Inc.}
+{Boston, Massachusetts}
+{Aug 2025 -- Present}
+% SLOT: Job Experience 1
+\begin{itemize}
+  \item \textbf{Digitized grant and donor systems}, moving 80+ applicants online and cutting processing time 40\%, boosting applicant satisfaction by 28\%.
+  \item Led \textbf{SEO-driven marketing campaigns across web and email}, lifting donor engagement 50\%, grant registrations 40\%, and tracking 6+ KPIs.
+  \item Produced \textbf{10+ print/digital assets and 2 board presentations}, managing biannual board meetings (12+ attendees) and driving 25\% higher stakeholder participation.
+\end{itemize}
+% END_SLOT
+
+\job{Digital Marketing Manager}
+{Moksha Creations}
+{Bengaluru, India}
+{Feb 2022 -- Aug 2023}
+% SLOT: Job Experience 2
+\begin{itemize}
+  \item Spearheaded the launch of the \textbf{e-commerce} segment, \textbf{doubling online sales} within 3 months by \textbf{optimizing digital ad campaigns} and refining \textbf{customer acquisition strategies}.
+  \item Planned, defined, and executed \textbf{content strategy} using Jira/Trello and \textbf{social media platforms} to grow the \textbf{brand awareness and customer engagement by 230\%} over 12 months, including \textbf{social media, blog posts and videos.}
+  \item Led the integration of \textbf{data analytics dashboards across multiple platforms}, resulting in a 40\% improvement in tracking \textbf{campaign ROI} and a 30\% increase in qualified \textbf{lead conversions} through data-driven targeting and performance insights.
+  \item Implemented \textbf{SEO strategies} for Amazon and Flipkart, increasing {click-through rates} by 35\% and improving \textbf{conversion rates} by 20\% within six months.
+\end{itemize}
+% END_SLOT
+
+\job{Growth Marketing \& Pricing Analyst}
+{Petropath Fluids India Pvt. Ltd.}
+{Bengaluru, India}
+{Jan 2021 -- Aug 2023}
+% SLOT: Job Experience 3
+\begin{itemize}
+  \item Orchestrated 15+ end-to-end \textbf{digital marketing campaigns across social media, email, website, and paid channels}, increasing qualified B2B leads by 30\% and contributing to a 20\% rise in sales inquiries within 12 months.
+  \item Redesigned and maintained the corporate \textbf{website and digital assets}, reducing bounce rate by 25\% and improving average session duration by 45 seconds, while creating 8+ \textbf{catalogs, brochures, and expo kits} to support global exhibitions.
+  \item Launched 10+ targeted \textbf{email campaigns and direct marketing initiatives} for drilling tools and solid control equipment, achieving average open rates of 35\% and click-through rates of 12\%, directly feeding the \textbf{sales pipeline}.
+  \item Collaborated with \textbf{senior leadership} to reallocate \$50K+ annual \textbf{marketing spend}, \textbf{improving ROI} per channel by 15\% and aligning budgets with strategic revenue objectives.
+\end{itemize}
+% END_SLOT
+
+\job{Digital Marketing Intern}
+{GAO Tek Inc.}
+{NYC, New York}
+{Oct 2019 -- Mar 2020}
+% SLOT: Job Experience 4
+\begin{itemize}
+  \item Improved \textbf{organic traffic} in a competitive \textbf{eCommerce} landscape by 35\% through data-driven Amazon \textbf{SEO strategy}.
+  \item Boosted conversion rates by 22\% by crafting performance-driven product descriptions and \textbf{ad copy} tailored to shopper psychology.
+  \item Enhanced CTR by 18\% by \textbf{optimizing product images \& videos}, and implementing \textbf{A/B testing} across \textbf{digital campaigns}.
+\end{itemize}
+% END_SLOT
+
+% =========================
+%         PROJECTS
+% =========================
+\sectiontitle{Projects}
+
+\job{Marketing Strategy Consultant}
+{CCA Global Partners}
+{Manchester, New Hampshire}
+{Jan 2024 -- Apr 2024}
+% SLOT: Project 1
+\begin{itemize}
+  \item Built a region-specific \textbf{marketing strategy} that included targeting plan, digital channel mix, and audience personas projected to improve brand visibility by 30\% within the first year of launch.
+  \item Delivered a 35-page \textbf{market entry and growth strategy report}, contributing to a potential \$10M+ expansion opportunity, and presented insights directly to CCA Global Partners' executive team
+\end{itemize}
+% END_SLOT
+
+% =========================
+%        EDUCATION
+% =========================
+\sectiontitle{Education}
+
+\textbf{Babson College} \hfill\textbf{Wellesley, MA, USA} \\
+\textit{MBA -- STEM (Business Analytics \& Machine Learning, Finance)}\hfill\textit{Sep 2023 -- May 2025}\\[2pt]
+
+\vspace{-12pt}
+\textbf{Technical University of Applied Sciences (TH-WS)}  \hfill\textbf{Schweinfurt, Germany}\\
+\textit{Bachelor of Engineering in Business and Engineering} \hfill\textit{Oct 2016 -- Dec 2020}\\
+
+\end{document}

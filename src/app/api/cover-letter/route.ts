@@ -1,207 +1,312 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateJSON, generateContent } from '@/lib/ai-client';
-import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs';
-import path from 'path';
-import { exec } from 'child_process';
-import util from 'util';
+import { getCoverLetterTemplate } from '@/lib/latex-templates';
+import { compileLatex, compileLatexToPdf } from '@/lib/latex-utils';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const execPromise = util.promisify(exec);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+
+// Model with Google Search grounding for company research
+const modelWithSearch = genAI.getGenerativeModel({
+    model: "gemini-2.0-flash",
+    tools: [{ googleSearch: {} } as any],
+});
+
+// Plain model for trimming (no search needed)
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+/**
+ * Splits text into sentences on sentence-ending punctuation.
+ * Keeps LaTeX commands (e.g. \textbf{...}) intact.
+ */
+function splitSentences(paragraph: string): string[] {
+    // Split on . ! ? followed by whitespace or end of string, but not inside {}
+    const sentences: string[] = [];
+    let current = '';
+    let depth = 0;
+    for (let i = 0; i < paragraph.length; i++) {
+        const ch = paragraph[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') depth--;
+        current += ch;
+        if (depth === 0 && /[.!?]/.test(ch)) {
+            const next = paragraph[i + 1];
+            if (!next || /\s/.test(next)) {
+                sentences.push(current.trim());
+                current = '';
+            }
+        }
+    }
+    if (current.trim()) sentences.push(current.trim());
+    return sentences.filter(Boolean);
+}
+
+// Cover letter template metrics: 11pt Palatino, A4, 1.75cm all margins
+// Text width: 175mm = 496pt, Palatino 11pt avg ~5.77pt/char → 86 chars/line
+// Text height: 262mm = 743pt, non-body ~138pt → 605pt available for body
+// Parskip overhead (7 paras): 6×5 = 30pt → 575pt for lines → 42 lines max
+// Max total body chars: 42 × 86 = 3,612
+const CHARS_PER_LINE     = 86;
+const MIN_LINES_PER_PARA = 5;
+const MAX_LINES_PER_PARA = 6;
+const MIN_CHARS_PER_PARA = CHARS_PER_LINE * MIN_LINES_PER_PARA; // 430
+const MAX_CHARS_PER_PARA = CHARS_PER_LINE * MAX_LINES_PER_PARA; // 516
+const MIN_TOTAL_BODY_CHARS = 3000;
+const MAX_TOTAL_BODY_CHARS = 3612;
+
+/**
+ * Strips LaTeX commands for the purpose of character counting,
+ * so \textbf{word} counts as "word" (5 chars), not 14.
+ */
+function visibleLength(text: string): number {
+    return text
+        .replace(/\\textbf\{([^}]*)\}/g, '$1')
+        .replace(/\\[a-zA-Z]+\s*/g, '')
+        .replace(/[{}]/g, '')
+        .length;
+}
+
+/**
+ * Enforces MIN_CHARS_PER_PARA–MAX_CHARS_PER_PARA visible character range per paragraph.
+ * - Trims at the last complete sentence that fits within the max.
+ * - Flags paragraphs below the minimum (can't pad in post-processing; prompt handles it).
+ */
+function enforceParagraphBounds(para: string): string {
+    const len = visibleLength(para);
+    if (len >= MIN_CHARS_PER_PARA && len <= MAX_CHARS_PER_PARA) return para;
+
+    if (len > MAX_CHARS_PER_PARA) {
+        // Trim: cut at last sentence that fits within max
+        const sentences = splitSentences(para);
+        let result = '';
+        for (const s of sentences) {
+            const candidate = result ? `${result} ${s}` : s;
+            if (visibleLength(candidate) > MAX_CHARS_PER_PARA) break;
+            result = candidate;
+        }
+        return result || sentences[0];
+    }
+
+    // Below minimum — return as-is (too short paragraphs are flagged but not padded here;
+    // the prompt instructs the AI to meet the minimum upfront)
+    return para;
+}
+
+/**
+ * Enforces 4–6 lines per paragraph and 3,612 total body chars. No paragraph count limit.
+ * Lines estimated via visible character count (86 chars/line @ 11pt Palatino, 1.75cm margins).
+ */
+function enforceStructure(body: string): string {
+    const paragraphs = body.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    const bounded = paragraphs.map(enforceParagraphBounds);
+
+    // Global cap: drop trailing paragraphs until total visible chars ≤ MAX_TOTAL_BODY_CHARS
+    let total = 0;
+    const result: string[] = [];
+    for (const para of bounded) {
+        const len = visibleLength(para);
+        if (total + len > MAX_TOTAL_BODY_CHARS) break;
+        result.push(para);
+        total += len;
+    }
+    const finalTotal = result.reduce((sum, p) => sum + visibleLength(p), 0);
+    if (finalTotal < MIN_TOTAL_BODY_CHARS) {
+        console.warn(`[CoverLetter] Body too short: ${finalTotal} chars (min ${MIN_TOTAL_BODY_CHARS})`);
+    }
+    return result.join('\n\n');
+}
+
+/**
+ * Parses pdflatex log for overflow amount.
+ * Returns overflow in pt, or 0 if none found.
+ * pdflatex writes: "Overfull \vbox (Xpt too high) while \output is active"
+ */
+function parseOverflowPts(log: string): number {
+    const match = log.match(/Overfull \\vbox \(([\d.]+)pt too high\)/);
+    return match ? parseFloat(match[1]) : 0;
+}
+
+/**
+ * Converts overflow points to lines and characters for the cover letter template.
+ * Template: 11pt font, a4paper, top/bottom 0.9in margins, parskip 5pt.
+ */
+function overflowToMetrics(overflowPt: number): { lines: number; chars: number } {
+    const baselineskip = 13.6;   // pt — standard for 11pt font
+    const charsPerLine = 82;     // approx for 11pt Charter on A4 with 1in L/R margins
+    const lines = Math.ceil(overflowPt / baselineskip);
+    return { lines, chars: lines * charsPerLine };
+}
+
+/**
+ * Cleans Gemini model output: removes markdown formatting, citation references,
+ * and closing sign-offs that shouldn't appear in the LaTeX body.
+ */
+function cleanModelOutput(text: string): string {
+    return text
+        .trim()
+        // Strip closing sign-offs
+        .replace(/[\n\r]+(sincerely|regards|best regards|yours (truly|sincerely)|warm regards)[,.]?[\s\S]*$/i, '')
+        // Convert markdown bold **text** → \textbf{text} (before stripping other markdown)
+        .replace(/\*\*([^*]+)\*\*/g, '\\textbf{$1}')
+        // Strip remaining single asterisks used for italic *text*
+        .replace(/\*([^*]+)\*/g, '$1')
+        // Strip markdown links [text](url) → keep text only
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        // Strip grounding citation footnotes like [1], [2], [Source], [1][2]
+        .replace(/\[\d+\]/g, '')
+        .replace(/\[Source[^\]]*\]/gi, '')
+        // Strip markdown headers ## Header
+        .replace(/^#{1,6}\s+/gm, '')
+        // Strip leading bullet/list markers
+        .replace(/^[\s]*[-*•]\s+/gm, '')
+        // Strip bare URLs from web research — long unbreakable strings overflow the page margin
+        .replace(/https?:\/\/\S+/g, '')
+        // Collapse any double-spaces left behind by URL removal
+        .replace(/  +/g, ' ')
+        .trim();
+}
 
 export async function POST(req: NextRequest) {
     try {
-        const body = await req.json();
-        const { mode = 'generate', resumeContent, jobDescription, linkedinContent, latexBody } = body;
+        const data = await req.json();
+        const { mode = 'generate' } = data;
 
-        // MODE: COMPILE (Takes existing latex body and compiles to PDF)
-        if (mode === 'compile') {
-            if (!latexBody) {
-                return NextResponse.json({ error: 'Missing latexBody for compilation' }, { status: 400 });
+        if (mode === 'generate') {
+            const { resumeContent, jobDescription, linkedinContent, companyName, personalInfo } = data;
+
+            const prompt = `
+                You are a senior career guidance and writing specialist with 15+ years of experience crafting executive-level cover letters. Your writing is precise, persuasive, and flows immaculately from one paragraph to the next — each idea builds naturally on the last with seamless transitions.
+
+                JOB DESCRIPTION:
+                ${jobDescription}
+
+                RESUME CONTENT:
+                ${resumeContent}
+
+                ${linkedinContent ? `LINKEDIN CONTENT:\n${linkedinContent}` : ''}
+
+                STRICT STRUCTURAL RULES — follow these exactly, no exceptions:
+                - Write a minimum of 7 paragraphs. Add more if the content warrants it.
+                - Each paragraph must be exactly 5-6 rendered lines (the page is 86 characters wide — so 430–516 characters per paragraph including spaces, excluding LaTeX commands). Write full, substantive sentences to fill each paragraph completely to at least 5 lines.
+                - The entire body must be between 3,000 and 3,612 total characters including spaces. 7 paragraphs × 5 lines × 86 chars = 3,010 chars minimum — use this as your guide.
+                - Separate paragraphs with a single blank line.
+
+                CONTENT RULES:
+                1. Carefully read the job description and mirror its tone, vocabulary, and level of formality throughout the letter.
+                2. The letter must flow immaculately — use smooth, purposeful transitions so each paragraph leads naturally into the next.
+                3. Emphasise throughout how the candidate will contribute to the team and organisation — not generic claims, but concrete ways their skills and experience directly address the company's stated needs.
+                4. Use Google Search to find recent news, product launches, initiatives, or strategic developments at ${companyName || 'the company'} (within the last 12 months). Weave 1-2 specific, accurate findings naturally into the letter to show genuine awareness.
+                5. Lead with a strong opening that immediately connects the candidate's background to the role and company.
+                6. Draw on measurable achievements and business impact from the resume.
+                7. Bold important words and phrases using \\textbf{...} — prioritise: (a) key skills and requirements from the job description, and (b) high-impact phrases that would immediately catch a hiring manager's eye (e.g. strong results, unique value propositions, standout achievements). Aim for 6-10 bolded instances spread naturally across the letter.
+                8. RETURN ONLY THE BODY PARAGRAPHS. No headers, no LaTeX document structure.
+                9. Do NOT include a closing (e.g. "Sincerely,", "Best regards,", your name). The template adds one.
+                10. Escape LaTeX special characters (%, $, &, _, {, }, #, ^) if they appear in the text.
+            `;
+
+            const result = await modelWithSearch.generateContent(prompt);
+            const rawText = cleanModelOutput(result.response.text());
+
+            // Enforce structural rules post-generation
+            const bodyText = enforceStructure(rawText);
+
+            const templateParams = {
+                name: personalInfo?.name || 'Applicant',
+                email: personalInfo?.email || '',
+                phone: personalInfo?.phone || '',
+                linkedin: personalInfo?.linkedin || '',
+                website: personalInfo?.website || '',
+                address: personalInfo?.address || '',
+                companyName: companyName || 'Hiring Manager',
+            };
+
+            let finalBody = bodyText;
+
+            // Enforce minimum 3,000 chars — loop until met (max 3 attempts)
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const currentLen = visibleLength(finalBody);
+                if (currentLen >= MIN_TOTAL_BODY_CHARS) break;
+
+                const shortfall = MIN_TOTAL_BODY_CHARS - currentLen;
+                const linesNeeded = Math.ceil(shortfall / CHARS_PER_LINE);
+                const parasNeeded = Math.ceil(linesNeeded / MIN_LINES_PER_PARA);
+                console.log(`[CoverLetter] Too short: ${currentLen} chars, need ${shortfall} more (~${linesNeeded} lines). Expanding (attempt ${attempt + 1})...`);
+
+                const expandResult = await model.generateContent(`
+You are a senior career guidance and writing specialist. The cover letter body below is only ${currentLen} characters — it needs at least ${shortfall} more characters to meet the 3,000 character minimum.
+
+Add ${parasNeeded} new paragraph(s), each 5-6 full lines (430–516 characters including spaces). Insert them before the final paragraph to maintain flow.
+- Each new paragraph must be substantive: deepen a specific achievement, explain how a skill applies to the role, or expand on a contribution point.
+- Each new paragraph must be 5-6 lines (430–516 chars). Write full, complete sentences — do not leave paragraphs short.
+- Maintain immaculate flow and professional tone. Preserve all \\textbf{} bolding.
+- Do NOT exceed 3,612 total characters.
+- Do NOT include a closing or sign-off.
+- Return the COMPLETE updated body, not just the new paragraphs.
+
+CURRENT BODY:
+${finalBody}
+                `);
+                const expanded = cleanModelOutput(expandResult.response.text());
+                finalBody = enforceStructure(expanded);
+                console.log(`[CoverLetter] After expansion attempt ${attempt + 1}: ${visibleLength(finalBody)} chars`);
             }
 
-            const fullLatex = `
-\\documentclass[11pt,a4paper]{article}
-\\usepackage[utf8]{inputenc}
-\\usepackage{geometry}
-\\geometry{a4paper, margin=1in}
-\\usepackage{parskip}
+            let latex = getCoverLetterTemplate({ ...templateParams, body: finalBody }, 'classic');
 
-\\begin{document}
-\\pagestyle{empty} 
+            // Enforce 1-page: compile twice (lastpage needs 2 runs to resolve), trim if needed
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const { pages, log } = await compileLatex(latex, { runs: 2 });
+                if (pages <= 1) break;
 
-${latexBody.replace(/\\documentclass[\s\S]*?\\begin{document}/, '').replace(/\\end{document}/, '')}
-
-\\end{document}
-`;
-
-            const runId = uuidv4();
-            const tempDir = path.join('/tmp', `cover-letter-${runId}`);
-
-            await fs.promises.mkdir(tempDir, { recursive: true });
-            const texPath = path.join(tempDir, 'coverliteral.tex');
-            await fs.promises.writeFile(texPath, fullLatex);
-
-            try {
-                await execPromise(`pdflatex -interaction=nonstopmode -output-directory=${tempDir} ${texPath}`);
-            } catch (execError: any) {
-                console.error("LaTeX Compilation Failed:", execError);
-                console.error("STDOUT:", execError.stdout);
-                console.error("STDERR:", execError.stderr);
-                // Try to read the log file
-                let logContent = 'Log file not found.';
-                let errorSummary = 'LaTeX compilation failed.';
-                try {
-                    const logPath = path.join(tempDir, 'coverliteral.log');
-                    logContent = await fs.promises.readFile(logPath, 'utf-8');
-                    console.error("LaTeX Log:", logContent);
-
-                    // Extract errors starting with "!"
-                    const errors = logContent.split('\n').filter(line => line.startsWith('!'));
-                    if (errors.length > 0) {
-                        errorSummary = errors.join('\n');
-                    }
-                } catch (e) { /* ignore */ }
-
-                return NextResponse.json(
-                    {
-                        error: errorSummary,
-                        details: logContent.slice(-2000),
-                        stdout: execError.stdout,
-                        stderr: execError.stderr
-                    },
-                    { status: 500 }
+                // Measure exact overflow from pdflatex log
+                const overflowPt = parseOverflowPts(log);
+                const { lines: overflowLines, chars: overflowChars } = overflowToMetrics(
+                    overflowPt > 0 ? overflowPt : 80  // fallback: assume ~6 lines if log unparseable
                 );
+
+                console.log(`[CoverLetter] overflow ${overflowPt}pt ≈ ${overflowLines} lines / ${overflowChars} chars (attempt ${attempt + 1})`);
+
+                const trimResult = await model.generateContent(`
+You are editing a cover letter that overflows onto a second page by exactly ${overflowLines} lines (~${overflowChars} characters).
+
+Your task: remove or shorten content to eliminate that overflow — no more, no less.
+- Identify the least important sentences near the END of the letter first (the overflow is at the bottom of page 1).
+- Shorten verbose phrases, remove redundant points, or trim a sentence from the last 1-2 paragraphs.
+- Do NOT rewrite the whole letter. Make minimal, surgical edits.
+- Preserve immaculate flow, all \\textbf{} bolding, contribution-focused language, and the strongest achievements.
+- Do NOT include a closing or sign-off.
+
+BODY:
+${finalBody}
+                `);
+                finalBody = cleanModelOutput(trimResult.response.text());
+                latex = getCoverLetterTemplate({ ...templateParams, body: finalBody }, 'classic');
             }
 
-            const pdfPath = path.join(tempDir, 'coverliteral.pdf');
-            const pdfBuffer = await fs.promises.readFile(pdfPath);
+            return NextResponse.json({ text: latex });
 
-            await fs.promises.rm(tempDir, { recursive: true, force: true });
+        } else if (mode === 'compile') {
+            const { latexContent, latexBody, runs = 1 } = data;
+            const contentToCompile = latexContent || latexBody;
 
-            const response = new NextResponse(pdfBuffer);
+            if (!contentToCompile) {
+                return NextResponse.json({ error: 'Missing LaTeX content' }, { status: 400 });
+            }
+
+            const pdfBuffer = await compileLatexToPdf(contentToCompile, { runs });
+
+            const response = new NextResponse(new Uint8Array(pdfBuffer));
             response.headers.set('Content-Type', 'application/pdf');
             response.headers.set('Content-Disposition', 'attachment; filename="Cover_Letter.pdf"');
 
             return response;
         }
 
-        // MODE: GENERATE (Default - Generates text via AI)
-        const { companyName = "Company Name" } = body;
-
-        if (!resumeContent || !jobDescription) {
-            return NextResponse.json(
-                { error: 'Missing resume content or job description' },
-                { status: 400 }
-            );
-        }
-
-        const prompt = `
-Act as an expert Career Strategist and ATS Optimization Specialist. Write a compelling, Harvard Business School-style cover letter with natural paragraph flow and professional narrative structure.
-
-### WRITING STYLE:
-- Professional, high-energy, confident but grounded
-- Natural flowing paragraphs (not rigid template structure)
-- Strong storytelling with business impact focus
-- No fluff or generic clichés
-- CRITICAL: Keep paragraphs balanced and concise (3-5 sentences each, max 60-80 words per paragraph)
-- Avoid long, dense paragraphs - break up content for readability
-- Aim for 4-6 well-balanced paragraphs total
-
-### CRITICAL REQUIREMENTS TO INCLUDE (woven naturally throughout):
-
-**ATS Optimization:**
-- Identify and integrate high-frequency hard skills and technical terms from the job description
-- Bold ALL keywords and industry-specific terms using \\textbf{keyword} in LaTeX
-
-**Company Research & Hook:**
-- Open with attention-grabbing reference to ${companyName}'s recent news, product launch, or market move
-- Demonstrate genuine research and knowledge of the company
-- Show alignment with their mission/vision
-
-**Value Proposition & Solutions:**
-- Based on the resume, articulate 3 specific solutions to ${companyName}'s current market challenges
-- Connect candidate's experience directly to company needs
-- Use metrics and quantified achievements
-
-**Achievement Stories:**
-- Include 3 compelling achievement narratives using format: Challenge → Solution → Business Impact
-- Every achievement must include specific metrics (percentages, dollar amounts, time savings, etc.)
-- Bold technical skills and tools used
-
-**Culture Fit & Collaboration:**
-- Reference ${companyName}'s core values and demonstrate alignment
-- Include specific examples of successful cross-functional collaboration
-- Show how candidate's working style matches company culture
-
-**Continuous Learning & Growth:**
-- Highlight specific skill development and continuous improvement examples
-- Mention tools, certifications, or technologies mastered
-- Bold the skill/tool names
-
-**Industry Expertise:**
-- Demonstrate deep knowledge of the industry
-- Include a current trend analysis or market insight
-- Propose a specific solution framework or strategic approach
-
-**Innovation & Future Alignment:**
-- Show understanding of ${companyName}'s future growth plans or recent innovations
-- Propose one high-level innovation idea or strategic initiative
-- Connect candidate's vision with company direction
-
-**Strong Closing:**
-- Clear articulation of immediate contribution potential
-- Long-term value proposition
-- Confident call to action requesting interview/conversation
-
-### FORMATTING RULES FOR LaTeX:
-- Use \\textbf{} for ALL keywords, company name, technical terms, and important phrases
-- Use DOUBLE NEWLINES (blank lines) to separate paragraphs - DO NOT use \\\\\\\\ for paragraph breaks
-- Escape special characters: \\&, \\%, \\$, \\_, \\#
-- End with: "Sincerely,\\\\\\\\ \\nGagan Bhaskar Naik"
-- Keep total length to 400-500 words
-
-### INPUTS:
-
-Job Description:
-${jobDescription}
-
-Resume:
-${resumeContent}
-
-LinkedIn Profile Context:
-${linkedinContent || "Not provided"}
-
-### OUTPUT:
-Provide ONLY the body paragraphs in LaTeX format (no header, no salutation). Create a flowing narrative that naturally incorporates ALL the requirements above. The letter should read like a compelling story, not a checklist.
-`;
-
-        const bodyLatex = await generateContent(prompt);
-
-        // Construct the full text including header for the user to review/edit
-        const header = `{\\textbf{Gagan Bhaskar Naik}}\\\\
-Sunnyvale, CA\\\\
-gbhaskarnaik1@babson.edu $\\vert$ (774)-290-3032
-
-\\today
-
-Hiring Team\\\\
-{${companyName}}
-
-Dear Hiring Manager,`;
-
-        // Ensure strictly one paragraph break between header and body
-        let cleanBody = bodyLatex.trim();
-
-        // Post-processing: Convert Markdown bold (**text**) to LaTeX bold (\textbf{text})
-        // The AI sometimes outputs Markdown despite instructions.
-        cleanBody = cleanBody.replace(/\*\*(.*?)\*\*/g, '\\textbf{$1}');
-
-        return NextResponse.json({ text: header + "\n\n" + cleanBody });
+        return NextResponse.json({ error: 'Invalid mode' }, { status: 400 });
 
     } catch (error: any) {
-        console.error('Error generating cover letter:', error);
+        console.error('Unexpected error in cover-letter API:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to generate cover letter' },
+            { error: error.message || 'Failed to process cover letter request' },
             { status: 500 }
         );
     }

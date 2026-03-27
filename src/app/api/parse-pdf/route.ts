@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { execFile } from 'child_process';
+import util from 'util';
+import crypto from 'crypto';
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 
-// Ensure this route runs in Node.js
-export const runtime = 'nodejs';
+/*
+ * A: Serves POST /api/parse-pdf
+ * B: Called by the main resume application page (src/app/page.tsx) in three scenarios:
+ *    1. On page load — parses the default public/linkedin.pdf to pre-fill LinkedIn text
+ *    2. During analysis — parses a user-uploaded resume PDF to extract its text
+ *    3. During analysis — parses a user-uploaded LinkedIn PDF to extract profile text
+ * C: Accepts a multipart/form-data upload with a 'file' field containing a PDF,
+ *    runs pdftotext (-layout) on it, and returns the extracted text as JSON { text: string }
+ * D: Receives resume PDFs and LinkedIn export PDFs uploaded by the user (resume pipeline only)
+ */
+
+const execFilePromise = util.promisify(execFile);
 
 export async function POST(req: NextRequest) {
     try {
@@ -13,32 +29,31 @@ export async function POST(req: NextRequest) {
         }
 
         const arrayBuffer = await file.arrayBuffer();
+        const pdfBuffer = Buffer.from(arrayBuffer);
 
-        // Dynamically import pdfjs-dist to avoid build issues with canvas in edge
-        const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+        const tempPdfPath = path.join(os.tmpdir(), `pdf_parse_${crypto.randomBytes(8).toString('hex')}.pdf`);
+        let extractedText = '';
+        try {
+            await fs.promises.writeFile(tempPdfPath, pdfBuffer);
 
-        // Set worker? In node we might not need it or use fake worker
-        // For simple text extraction in Node, we can often disable worker or point to it
-        // But pdfjs in Node usually requires some setup.
-        // Actually, simpler approach for "serverless" node:
+            // Find pdftotext binary (same candidates as pdfline-counter.ts)
+            const candidates = [
+                '/opt/homebrew/bin/pdftotext',
+                '/usr/local/bin/pdftotext',
+                '/usr/bin/pdftotext',
+            ];
+            let bin = 'pdftotext';
+            for (const p of candidates) {
+                if (fs.existsSync(p)) { bin = p; break; }
+            }
 
-        const loadingTask = pdfjs.getDocument({
-            data: new Uint8Array(arrayBuffer),
-            useSystemFonts: true,
-            disableFontFace: true,
-        });
-
-        const pdfDocument = await loadingTask.promise;
-        let fullText = '';
-
-        for (let i = 1; i <= pdfDocument.numPages; i++) {
-            const page = await pdfDocument.getPage(i);
-            const textContent = await page.getTextContent();
-            const pageText = textContent.items.map((item: any) => item.str).join(' ');
-            fullText += pageText + '\n';
+            const { stdout } = await execFilePromise(bin, ['-layout', tempPdfPath, '-'], { timeout: 15000 });
+            extractedText = stdout;
+        } finally {
+            await fs.promises.rm(tempPdfPath, { force: true }).catch(() => {});
         }
 
-        return NextResponse.json({ text: fullText });
+        return NextResponse.json({ text: extractedText });
     } catch (error: any) {
         console.error('Error parsing PDF:', error);
         return NextResponse.json(

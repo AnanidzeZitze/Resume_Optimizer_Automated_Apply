@@ -1,3 +1,51 @@
+export interface PersonalInfo {
+  name: string;
+  email: string;
+  phone: string;
+  linkedin: string;
+  website: string;
+  address: string;
+}
+
+/**
+ * Extracts personal info from the LaTeX header block.
+ */
+export function parsePersonalInfo(content: string): PersonalInfo {
+  // Only search AFTER \begin{document} to skip preamble \newcommand definitions
+  const docPart = content.split('\\begin{document}')[1] || content;
+
+  // First \begin{center}...\end{center} after \begin{document} is the resume header
+  const headerCenter = docPart.match(/\\begin\{center\}([\s\S]*?)\\end\{center\}/)?.[1] || '';
+
+  // Name: first \textbf{...} in the header that has no # (not a LaTeX argument placeholder)
+  const name = headerCenter.match(/\\textbf\{([^}#]+)\}/)?.[1]?.trim() || '';
+
+  // Email: \href{mailto:email}{...}
+  const email = headerCenter.match(/\\href\{mailto:([^}]+)\}/)?.[1]?.trim() || '';
+
+  // LinkedIn URL: \href{url}{LinkedIn}
+  const linkedin = headerCenter.match(/\\href\{([^}]+)\}\{LinkedIn\}/i)?.[1]?.trim() || '';
+
+  // Website URL: \href{url}{Website}
+  const website = headerCenter.match(/\\href\{([^}]+)\}\{Website\}/i)?.[1]?.trim() || '';
+
+  // Phone: first standalone phone-number-shaped token (digits + separators, 7+ chars)
+  const phone = headerCenter.match(/(?<![.\d])(\d[\d\s\-().]{5,}\d)(?![.\d])/)?.[1]?.trim() || '';
+
+  // Address: text on the line(s) between the name \\ and the first digit/\href
+  // Strip the name line first, then grab everything up to phone or \href
+  const afterName = headerCenter.replace(/\{[^}]*\\textbf[^}]*\}[^\\]*\\\\[^\n]*\n?/, '');
+  const addrRaw = afterName.split(/\d{3}[\s\-]\d{3}|\\href\{/)[0];
+  const address = addrRaw
+    .replace(/\\;?\s*\|\s*\\;?/g, '')   // remove \;|\; separators
+    .replace(/\\[a-zA-Z]+\s*/g, '')      // remove remaining LaTeX commands
+    .replace(/[{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return { name, email, phone, linkedin, website, address };
+}
+
 export interface Slot {
   name: string;
   originalContent: string;
@@ -19,7 +67,7 @@ export function parseSlots(content: string): Slot[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const startMatch = line.match(/%\s*SLOT:\s*(.+)/i);
+    const startMatch = line.match(/(?:%+|\\%)\s*SLOT:\s*(.*?)\s*%*$/i);
     const endMatch = line.match(/%\s*END_SLOT/i);
 
     if (startMatch) {
@@ -61,46 +109,13 @@ export function parseSlots(content: string): Slot[] {
 export function applyChanges(original: string, modifications: { slotName: string; newContent: string }[]): string {
   const slots = parseSlots(original);
   const lines = original.split('\n');
-  let newLines = [...lines];
-
-  // We need to apply changes from bottom to top to avoid line shift issues,
-  // or just track the lines designated by the parser.
-  // Since we rely on the parser's line numbers which are based on the original,
-  // we should map modifications to slots.
-
-  // Create a map of changes
   const modificationMap = new Map(modifications.map(m => [m.slotName, m.newContent]));
+  const appliedSlots = new Set<string>();
 
-  // Process slots in reverse order to keep line numbers valid
-  for (let i = slots.length - 1; i >= 0; i--) {
-    const slot = slots[i];
-    if (modificationMap.has(slot.name)) {
-      const newContent = modificationMap.get(slot.name)!;
-      // Replace lines between startLine and endLine with new content
-      // The content is at startLine + 1 to endLine - 1
-      const contentStart = slot.startLine + 1;
-      const contentEnd = slot.endLine; // exclusive of endLine? lines[endLine] is % END_SLOT
-      
-      // We want to preserve the markers
-      // So we replace lines from contentStart to contentEnd - 1
-      // If contentStart == contentEnd, it's empty, insert there.
-
-      // Actually, array splice is easier.
-      // But we need to handle multi-line new content.
-      
-      // Let's constructing the new file content.
-      // Actually, easier way:
-    }
-  }
-  
-  // Re-approach:
-  // Iterate lines, if line is start of slot, check if we have a mod.
-  // If so, output start marker, output new content, skip to end marker, output end marker.
-  // Else output line.
-  
   const resultLines: string[] = [];
+
   let skipUntil: number | null = null;
-  
+
   for (let i = 0; i < lines.length; i++) {
     if (skipUntil !== null) {
       if (i === skipUntil) {
@@ -114,15 +129,12 @@ export function applyChanges(original: string, modifications: { slotName: string
     if (startMatch) {
       const slotName = startMatch[1].trim();
       const slot = slots.find(s => s.name === slotName && s.startLine === i);
-      
+
       if (slot && modificationMap.has(slotName)) {
         resultLines.push(lines[i]); // Keep start marker
         resultLines.push(modificationMap.get(slotName)!); // Insert new content
         skipUntil = slot.endLine; // Skip original content until end marker
-        // Note: loop continues, next iteration i+1 check against skipUntil?
-        // Wait, if skipUntil is 10, next loop i=...
-        // We need to skip lines from i+1 to slot.endLine - 1.
-        // And then at slot.endLine we push that line.
+        appliedSlots.add(slotName);
       } else {
         resultLines.push(lines[i]);
       }
@@ -131,5 +143,123 @@ export function applyChanges(original: string, modifications: { slotName: string
     }
   }
 
+  // Throw if a slot modification was never applied — indicates a slot name mismatch
+  for (const mod of modifications) {
+    if (!appliedSlots.has(mod.slotName)) {
+      throw new Error(
+        `SLOT_NOT_FOUND: Slot "${mod.slotName}" not found in LaTeX source. Verify the % SLOT: ${mod.slotName} marker exists and is correctly formatted.`
+      );
+    }
+  }
+
   return resultLines.join('\n');
 }
+
+/**
+ * Post-processes AI-generated LaTeX content to ensure common special characters are escaped.
+ * AIs often miss these or only partially escape them.
+ * This is a "safety net" for the AI output.
+ */
+export function fixLatexOutput(text: string): string {
+  if (!text) return "";
+  
+  let s = text;
+  
+  // Normalize then escape & and %
+  // We use a placeholder for double backslashes to avoid the "line break" problem
+  s = s.replace(/\\\\/g, '__DOUBLE_BACKSLASH__');
+  
+  s = s.replace(/\\&/g, '&');
+  s = s.replace(/&/g, '\\&');
+  
+  s = s.replace(/\\%/g, '%');
+  s = s.replace(/%/g, '\\%');
+  
+  s = s.replace(/__DOUBLE_BACKSLASH__/g, '\\\\');
+
+  // Other chars
+  s = s.replace(/(?<!\\)\$/g, '\\$');
+  s = s.replace(/(?<!\\)_/g, '\\_');
+  s = s.replace(/(?<!\\)#/g, '\\#');
+  s = s.replace(/(?<!\\)\{/g, '\\{');
+  s = s.replace(/(?<!\\)\}/g, '\\}');
+  s = s.replace(/(?<!\\)~/g, '\\textasciitilde ');
+  // Handle ^ which was missing its implementation
+  s = s.replace(/(?<!\\)\^/g, '\\textasciicircum ');
+
+  // Stray \ removal: remove single backslashes that aren't starting a command or escaping a char
+  s = s.replace(/(?<!\\)\\(?![&%$_#{}~^\\a-zA-Z])/g, '');
+
+  // Blank line collapsing
+  s = s.replace(/\n\s*\n\s*\n+/g, '\n\n');
+
+  return s.trim();
+}
+
+/**
+ * Strips common LaTeX commands to return a plain-text version of the content.
+ * Useful for providing context to LLM prompts without token waste or formatting noise.
+ */
+export function stripLatex(text: string): string {
+    if (!text) return "";
+    
+    return text
+        // 1. Handle commands with arguments
+        // Handle \href{url}{text} -> text
+        .replace(/\\href\{[^}]*\}\{([^}]*)\}/g, '$1')
+        // Handle \section{Title}, \textbf{Bold} etc -> Title, Bold
+        .replace(/\\(?:section|subsection|subsubsection|paragraph|subparagraph|textbf|textit|underline|emph|textsc|texttt|item)\*?\{([^}]*)\}/g, '$1')
+        
+        // 2. Remove structural commands
+        .replace(/\\(?:begin|end|documentclass|usepackage|geometry|hypersetup|pagestyle|setlength|definecolor)\{[^}]*\}/g, '')
+        
+        // 3. Remove single backslash commands like \\, \vfill, \noindent etc
+        .replace(/\\[a-zA-Z]+\s*/g, ' ')
+        .replace(/\\\\/g, '\n')
+        
+        // 4. Clean up remaining braces and excessive whitespace
+        .replace(/\{|\}/g, '')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n\s*(\n\s*)+/g, '\n\n') // Keep double newlines but remove triple+
+        .trim();
+}
+
+/**
+ * Specifically for budgeting and validation: strips commands BUT keeps inner text.
+ * \textbf{X} -> X, remove all other \commands, remove {}, trim.
+ */
+export function stripLatexToVisible(text: string): string {
+  if (!text) return "";
+  let s = text;
+  
+  // 1. Handle common escaped special characters: \&, \%, \$, \_, \#, \{, \}
+  s = s.replace(/\\&/g, '&');
+  s = s.replace(/\\%/g, '%');
+  s = s.replace(/\\\$/g, '$');
+  s = s.replace(/\\_/g, '_');
+  s = s.replace(/\\#/g, '#');
+  s = s.replace(/\\\{/g, '{');
+  s = s.replace(/\\\}/g, '}');
+
+  // 2. Handle specific commands that preserve text (innermost first or non-greedy)
+  // Handle \href{url}{text} -> text
+  s = s.replace(/\\href\{[^}]*\}\{([^}]*)\}/g, '$1');
+  // Handle \textbf{X}, \textit{X}, \emph{X}, \underline{X}, \section{X}, \subsection{X} -> X
+  s = s.replace(/\\(?:textbf|textit|emph|underline|section|subsection|subsubsection)\{([^}]*)\}/g, '$1');
+  
+  // 3. Remove structural environments, skillbreak, and \item
+  s = s.replace(/\\begin\{[^}]*\}|\\end\{[^}]*\}|\\skillbreak|\\item/g, '');
+  
+  // 4. Remove all other backslash commands (word characters only, to avoid catching escaped chars already handled)
+  s = s.replace(/\\[a-zA-Z]+/g, ' ');
+  
+  // 5. Remove remaining braces
+  s = s.replace(/[{}]/g, '');
+  
+  // 6. Handle double backslash (line break)
+  s = s.replace(/\\\\/g, ' ');
+  
+  // 7. Cleanup: strip trailing/leading whitespace, collapse multiple spaces
+  return s.replace(/\s+/g, ' ').trim();
+}
+

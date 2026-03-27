@@ -1,12 +1,13 @@
 {
-  "name": "sparse-spirit",
+  "name": "resume-optimizer",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "jest"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -16,6 +17,7 @@
     "canvas": "^3.2.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
     "framer-motion": "^12.33.0",
     "lucide-react": "^0.563.0",
     "next": "16.1.6",
@@ -29,13 +31,16 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "jest": "^30.3.0",
     "tailwindcss": "^4",
+    "ts-jest": "^29.4.6",
     "typescript": "^5"
   }
 }

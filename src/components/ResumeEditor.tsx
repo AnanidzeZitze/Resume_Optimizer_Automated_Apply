@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Button } from './ui/button';
-import { Textarea } from './ui/textarea';
+import React from 'react';
 import { Slot } from '@/lib/latex-parser';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, Check, RotateCcw, Sparkles } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Check, RotateCcw, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // UI interface for slot with analysis
@@ -142,7 +140,7 @@ export function ResumeEditor({
                             className="space-y-4 flex-1 flex flex-col"
                         >
                             <div className="p-4 bg-primary/5 border border-primary/10 rounded-xl">
-                                <p className="text-zinc-300 italic text-sm">"{activeSuggestion.reasoning}"</p>
+                                <p className="text-zinc-300 italic text-sm">&ldquo;{activeSuggestion.reasoning}&rdquo;</p>
                             </div>
 
                             <textarea

@@ -53,7 +53,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         >
             <input
                 type="file"
-                // accept=".tex,.pdf" // Should probably be dynamic or generic
                 className="absolute inset-0 opacity-0 cursor-pointer z-10"
                 onChange={(e) => e.target.files && onFileSelect(e.target.files[0])}
             />
